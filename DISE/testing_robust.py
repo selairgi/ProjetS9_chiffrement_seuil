@@ -29,7 +29,7 @@ def measure_performance_with_stress(max_documents, interval_decrement=0.00005, m
         while time.perf_counter() - start_iteration < current_interval:
             parties = random.sample(range(n), t + delta)
             op_start_time = time.perf_counter()
-            robust_dist_enc.robust_encrypt(message, active_servers=parties)
+            robust_dist_enc.robust_encrypt(message,parties)
             op_end_time = time.perf_counter()
 
             # Calcul de la latence pour cette opération
