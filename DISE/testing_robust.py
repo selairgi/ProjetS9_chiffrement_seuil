@@ -2,15 +2,16 @@ import time
 import random
 import matplotlib.pyplot as plt
 from master_key import MasterKey
-from dist_enc import DistEnc
+from RobustDise import RobustDistEnc
 
 def measure_performance_with_stress(max_documents, interval_decrement=0.00005, min_interval=0.001):
     n = 50
-    m = 40
+    t = 40
+    delta = 4
     master_key = MasterKey()
     master_key.key_gen(n=n)
 
-    dist_enc = DistEnc(master_key, threshold=m)
+    robust_dist_enc = RobustDistEnc(master_key, threshold=t, delta=delta)
     message = b"Confidential data"
 
     latencies = []  # Liste pour stocker la latence moyenne par document
@@ -26,9 +27,9 @@ def measure_performance_with_stress(max_documents, interval_decrement=0.00005, m
         # Effectuer des opérations pendant une période donnée
         start_iteration = time.perf_counter()
         while time.perf_counter() - start_iteration < current_interval:
-            parties = random.sample(range(n), m)
+            parties = random.sample(range(n), t + delta)
             op_start_time = time.perf_counter()
-            dist_enc.encrypt(message, parties=parties)
+            robust_dist_enc.robust_encrypt(message, active_servers=parties)
             op_end_time = time.perf_counter()
 
             # Calcul de la latence pour cette opération
@@ -90,6 +91,6 @@ def plot_results(document_counts, latencies, throughputs):
     plt.show()
 
 if __name__ == "__main__":
-    max_documents = 50  # Nombre de documents à chiffrer
+    max_documents = 500  # Nombre de documents à chiffrer
     document_counts, latencies, throughputs = measure_performance_with_stress(max_documents)
     plot_results(document_counts, latencies, throughputs)
