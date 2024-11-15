@@ -1,5 +1,5 @@
-from master_key import MasterKey
-from dist_enc import DistEnc
+from DISE.master_key import MasterKey
+from DISE.dist_enc import DistEnc
 import random
 from Crypto.Random import get_random_bytes
 from Crypto.Cipher import AES
