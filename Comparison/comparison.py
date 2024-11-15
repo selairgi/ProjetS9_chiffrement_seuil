@@ -1,7 +1,10 @@
 import time
 import random
 import os
+import sys
+import os
 import matplotlib.pyplot as plt
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from DISE.master_key import MasterKey
 from DISE.dist_enc import DistEnc
 from DISE.RobustDise import RobustDistEnc
