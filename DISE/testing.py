@@ -38,7 +38,7 @@ def measure_performance_with_stress(max_documents, interval_decrement=0.00005, m
         # Calcul des métriques
         total_time = time.perf_counter() - start_time
 
-        # Vérifier que `total_time` est différent de zéro
+        # Vérifier que total_time est différent de zéro
         if total_time == 0:
             total_time = 1e-6  # Remplacer par une très petite valeur non nulle
 
@@ -53,7 +53,7 @@ def measure_performance_with_stress(max_documents, interval_decrement=0.00005, m
         current_interval = max(min_interval, current_interval - interval_decrement)
 
         # Condition d'arrêt si la latence double par rapport à la précédente (indicateur de saturation)
-        if len(latencies) > 1 and avg_latency > latencies[-2] * 2:
+        if len(latencies) > 1 and avg_latency > latencies[-2] * 5:
             print(f"Le système a atteint son seuil de saturation à l'itération {document_number}.")
             break
 
@@ -90,6 +90,6 @@ def plot_results(document_counts, latencies, throughputs):
     plt.show()
 
 if __name__ == "__main__":
-    max_documents = 50  # Nombre de documents à chiffrer
+    max_documents = 500  # Nombre de documents à chiffrer
     document_counts, latencies, throughputs = measure_performance_with_stress(max_documents)
     plot_results(document_counts, latencies, throughputs)

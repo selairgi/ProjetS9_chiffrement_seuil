@@ -144,9 +144,9 @@ class RobustDistEnc(DistEnc):
 
 # Example usage
 def main():
-    n = 50
-    t = 40
-    delta = 5  # Number of adversaries the system should tolerate
+    n = 15
+    t = 10
+    delta = 3  # Number of adversaries the system should tolerate
 
     master_key = MasterKey()
     master_key.key_gen(n=n)
@@ -157,7 +157,7 @@ def main():
 
     # Select active parties for encryption and decryption
     parties = random.sample(range(n), t + delta)  # Choose t + delta unique parties from n
-    print("Selected parties for encryption and decryption:", parties)
+    print("Selected parties for encryption :", parties)
 
     # Attempt robust encryption
     try:
