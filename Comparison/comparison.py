@@ -15,44 +15,58 @@ temp_dir = "temp"
 file_path = os.path.join(temp_dir, "temp_file.txt")
 
 # Créer le fichier commun de test
-def create_test_file():
+def create_test_file(size_kb):
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
     with open(file_path, "wb") as f:
-        f.write(os.urandom(1024 * 10))  # fichier de 10 Ko
-
+        f.write(os.urandom(size_kb * 1024))  # fichier de `size_kb` Ko
 # Fonction de mesure de performance pour DIAE avec condition d'arrêt
-def measure_performance_diae(max_files, key):
+def measure_performance_diae(max_files, key, interval_decrement=0.00005, min_interval=0.001):
     latencies = []
     throughputs = []
-    file_counts = []
+    intervals = []  # Liste pour stocker les intervalles courants
+
+    current_interval = 0.01
 
     for file_number in range(max_files):
-        encrypted_file_path = os.path.join(temp_dir, f"temp_file_encrypted_{file_number}.txt")
-        start_time = time.perf_counter()
+        iteration_latencies = []
+        start_iteration = time.perf_counter()
 
-        # Chiffre le fichier
-        encrypt_file(file_path, key)
+        # Exécuter les opérations dans l'intervalle courant
+        while time.perf_counter() - start_iteration < current_interval:
+            encrypted_file_path = os.path.join(temp_dir, f"temp_file_encrypted_{file_number}.txt")
+            start_time = time.perf_counter()
 
-        # Calcul des métriques
-        total_time = time.perf_counter() - start_time
-        latency = total_time
-        throughput = 1 / total_time if total_time > 0 else 0
+            # Chiffre le fichier
+            encrypt_file(file_path, key)
 
-        latencies.append(latency)
+            # Calcul de la latence pour chaque opération
+            op_latency = time.perf_counter() - start_time
+            iteration_latencies.append(op_latency)
+
+            # Supprimez le fichier chiffré après chaque itération pour éviter les conflits
+            if os.path.exists(encrypted_file_path):
+                os.remove(encrypted_file_path)
+
+        # Calcul des métriques pour cet intervalle
+        total_time = time.perf_counter() - start_iteration
+        throughput = len(iteration_latencies) / total_time if total_time > 0 else 0
+        avg_latency = sum(iteration_latencies) / len(iteration_latencies) if iteration_latencies else 0
+
         throughputs.append(throughput)
-        file_counts.append(file_number)
+        latencies.append(avg_latency)
+        intervals.append(current_interval)
 
-        # Condition d'arrêt si la latence double par rapport à la latence minimale
-        if len(latencies) > 1 and latency > min(latencies) * 2:
-            print(f"DIAE atteint saturation à l'itération {file_number}.")
+        # Réduire l'intervalle pour la prochaine itération
+        current_interval = max(min_interval, current_interval - interval_decrement)
+
+        # Condition d'arrêt si la latence moyenne dépasse trois fois la latence minimale
+        if len(latencies) > 1 and avg_latency > min(latencies) * 2:
+            print(f"DIAE atteint saturation à l'intervalle {current_interval:.5f}.")
             break
 
-        # Supprimez le fichier chiffré après chaque itération pour éviter les conflits
-        if os.path.exists(encrypted_file_path):
-            os.remove(encrypted_file_path)
+    return intervals, latencies, throughputs
 
-    return file_counts, latencies, throughputs
 
 # Fonction pour DistEnc avec condition d'arrêt et chiffrement du fichier
 def measure_performance_dist_enc(max_documents, interval_decrement=0.00005, min_interval=0.001):
@@ -69,7 +83,7 @@ def measure_performance_dist_enc(max_documents, interval_decrement=0.00005, min_
 
     latencies = []
     throughputs = []
-    document_counts = []
+    intervals = []  # Liste pour stocker les intervalles courants
 
     current_interval = 0.01
 
@@ -96,7 +110,7 @@ def measure_performance_dist_enc(max_documents, interval_decrement=0.00005, min_
 
         throughputs.append(throughput)
         latencies.append(avg_latency)
-        document_counts.append(document_number)
+        intervals.append(current_interval)  # Stockage de l'intervalle courant
 
         current_interval = max(min_interval, current_interval - interval_decrement)
 
@@ -105,7 +119,7 @@ def measure_performance_dist_enc(max_documents, interval_decrement=0.00005, min_
             print(f"DistEnc atteint saturation à l'itération {document_number}.")
             break
 
-    return document_counts, latencies, throughputs
+    return intervals, latencies, throughputs
 
 # Fonction pour RobustDistEnc avec condition d'arrêt et chiffrement du fichier
 def measure_performance_robust_dist_enc(max_documents, interval_decrement=0.00005, min_interval=0.001):
@@ -123,15 +137,15 @@ def measure_performance_robust_dist_enc(max_documents, interval_decrement=0.0000
 
     latencies = []
     throughputs = []
-    document_counts = []
+    intervals = []  # Liste pour stocker les intervalles courants
 
     current_interval = 0.01
 
     for document_number in range(max_documents):
         iteration_latencies = []
-        start_time = time.perf_counter()
-        
         start_iteration = time.perf_counter()
+        
+        # Exécuter les opérations dans l'intervalle courant
         while time.perf_counter() - start_iteration < current_interval:
             parties = random.sample(range(n), t + delta)
             op_start_time = time.perf_counter()
@@ -141,86 +155,101 @@ def measure_performance_robust_dist_enc(max_documents, interval_decrement=0.0000
             latency = op_end_time - op_start_time
             iteration_latencies.append(latency)
 
-        total_time = time.perf_counter() - start_time
-        if total_time == 0:
-            total_time = 1e-6
-
-        throughput = len(iteration_latencies) / total_time
+        # Calcul des métriques pour cet intervalle
+        total_time = time.perf_counter() - start_iteration
+        throughput = len(iteration_latencies) / total_time if total_time > 0 else 0
         avg_latency = sum(iteration_latencies) / len(iteration_latencies) if iteration_latencies else 0
 
         throughputs.append(throughput)
         latencies.append(avg_latency)
-        document_counts.append(document_number)
+        intervals.append(current_interval)
 
+        # Réduire l'intervalle pour la prochaine itération
         current_interval = max(min_interval, current_interval - interval_decrement)
 
-        # Condition d'arrêt si la latence moyenne dépasse deux fois la latence minimale
+        # Condition d'arrêt si la latence moyenne dépasse trois fois la latence minimale
         if len(latencies) > 1 and avg_latency > min(latencies) * 2:
-            print(f"RobustDistEnc atteint saturation à l'itération {document_number}.")
+            print(f"RobustDistEnc atteint saturation à l'intervalle {current_interval:.5f}.")
             break
 
-    return document_counts, latencies, throughputs
+    return intervals, latencies, throughputs
 
-# Fonction pour tracer la comparaison
-def plot_comparison(results1, results2, results3, labels):
-    document_counts1, latencies1, throughputs1 = results1
-    document_counts2, latencies2, throughputs2 = results2
-    file_counts3, latencies3, throughputs3 = results3
+
+def plot_comparison(results1, results2, results3, labels, file_size_kb):
+    intervals1, latencies1, throughputs1 = results1
+    intervals2, latencies2, throughputs2 = results2
+    intervals3, latencies3, throughputs3 = results3
 
     plt.figure(figsize=(18, 12))
 
-    # Latence moyenne par document
-    plt.subplot(2, 2, 1)
-    plt.plot(document_counts1, latencies1, marker='o', linestyle='-', color='b', label=labels[0])
-    plt.plot(document_counts2, latencies2, marker='o', linestyle='--', color='orange', label=labels[1])
-    plt.plot(file_counts3, latencies3, marker='o', linestyle=':', color='purple', label=labels[2])
-    plt.xlabel('Nombre de documents/fichiers chiffrés')
-    plt.ylabel('Latence moyenne (secondes)')
-    plt.title('Latence moyenne en fonction du nombre de documents/fichiers chiffrés')
-    plt.legend()
-    plt.grid(True)
+    # Ajouter la taille du fichier comme sous-titre global
+    plt.suptitle(f"Performance des algorithmes pour un fichier de {file_size_kb} Ko", fontsize=16)
 
-    # Débit par document
-    plt.subplot(2, 2, 2)
-    plt.plot(document_counts1, throughputs1, marker='o', linestyle='-', color='r', label=labels[0])
-    plt.plot(document_counts2, throughputs2, marker='o', linestyle='--', color='green', label=labels[1])
-    plt.plot(file_counts3, throughputs3, marker='o', linestyle=':', color='purple', label=labels[2])
-    plt.xlabel('Nombre de documents/fichiers chiffrés')
-    plt.ylabel('Débit (opérations par seconde)')
-    plt.title('Débit en fonction du nombre de documents/fichiers chiffrés')
+    # Latence moyenne par intervalle courant
+    plt.subplot(2, 2, 1)
+    plt.plot(intervals1, latencies1, marker='o', linestyle='-', label=labels[0])
+    plt.plot(intervals2, latencies2, marker='x', linestyle='--', label=labels[1])
+    plt.plot(intervals3, latencies3, marker='s', linestyle=':', label=labels[2])
+    plt.xlabel('Intervalle courant (secondes)')
+    plt.ylabel('Latence moyenne (secondes)')
+    plt.title('Latence moyenne en fonction de l\'intervalle courant')
     plt.legend()
     plt.grid(True)
+    plt.gca().invert_xaxis()  # Inverser l'axe des intervalles
+
+    # Débit par intervalle courant
+    plt.subplot(2, 2, 2)
+    plt.plot(intervals1, throughputs1, marker='o', linestyle='-', label=labels[0])
+    plt.plot(intervals2, throughputs2, marker='x', linestyle='--', label=labels[1])
+    plt.plot(intervals3, throughputs3, marker='s', linestyle=':', label=labels[2])
+    plt.xlabel('Intervalle courant (secondes)')
+    plt.ylabel('Débit (opérations par seconde)')
+    plt.title('Débit en fonction de l\'intervalle courant')
+    plt.legend()
+    plt.grid(True)
+    plt.gca().invert_xaxis()  # Inverser l'axe des intervalles
 
     # Latence en fonction du débit
-    plt.subplot(2, 2, (3, 4))
+    plt.subplot(2, 1, 2)
     plt.plot(throughputs1, latencies1, marker='o', linestyle='-', color='g', label=labels[0])
-    plt.plot(throughputs2, latencies2, marker='o', linestyle='--', color='brown', label=labels[1])
-    plt.plot(throughputs3, latencies3, marker='o', linestyle=':', color='purple', label=labels[2])
+    plt.plot(throughputs2, latencies2, marker='x', linestyle='--', color='brown', label=labels[1])
+    plt.plot(throughputs3, latencies3, marker='s', linestyle=':', color='purple', label=labels[2])
     plt.xlabel('Débit (opérations par seconde)')
     plt.ylabel('Latence moyenne (secondes)')
     plt.title('Latence en fonction du débit')
     plt.legend()
     plt.grid(True)
 
-    plt.tight_layout()
+    plt.tight_layout(rect=[0, 0, 1, 0.95])  # Ajuster pour laisser de la place au titre global
     plt.show()
 
-if __name__ == "__main__":
-    # Création du fichier de test avant d'exécuter les algorithmes
-    create_test_file()
-    
-    max_documents = 500
-    key = os.urandom(32)  # Clé aléatoire pour AES-GCM
 
-    # Exécution des trois algorithmes
-    print("Exécution de DistEnc...")
-    results_dist_enc = measure_performance_dist_enc(max_documents)
-    
-    print("Exécution de RobustDistEnc...")
-    results_robust_dist_enc = measure_performance_robust_dist_enc(max_documents)
-    
-    print("Exécution de DIAE...")
-    results_diae = measure_performance_diae(max_documents, key)
-    
-    # Comparaison des résultats
-    plot_comparison(results_dist_enc, results_robust_dist_enc, results_diae, labels=["DistEnc", "RobustDistEnc", "DIAE"])
+def run_all_tests_and_plot():
+    file_sizes = [10, 100, 1000]  # Taille des fichiers en Ko
+    labels = ["DistEnc", "RobustDistEnc", "DIAE"]
+
+    for size_kb in file_sizes:
+        print(f"Création du fichier de {size_kb} Ko...")
+        create_test_file(size_kb)
+
+        max_documents = 500
+        key = os.urandom(32)  # Clé aléatoire pour AES-GCM
+
+        # Exécution des trois algorithmes
+        print("Exécution de DistEnc...")
+        results_dist_enc = measure_performance_dist_enc(max_documents)
+        
+        print("Exécution de RobustDistEnc...")
+        results_robust_dist_enc = measure_performance_robust_dist_enc(max_documents)
+        
+        print("Exécution de DIAE...")
+        results_diae = measure_performance_diae(max_documents, key)
+        
+        # Comparaison des résultats
+        print(f"Tracé des résultats pour un fichier de {size_kb} Ko...")
+        plot_comparison(results_dist_enc, results_robust_dist_enc, results_diae, labels=labels, file_size_kb=size_kb)
+
+
+if __name__ == "__main__":
+    # Exécuter les tests pour différentes tailles de fichier
+    run_all_tests_and_plot()
