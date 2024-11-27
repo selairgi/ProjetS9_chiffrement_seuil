@@ -1,138 +1,98 @@
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature, decode_dss_signature
-from cryptography.exceptions import InvalidSignature
 import random
-import hashlib
-from functools import reduce
-import time
+from hashlib import sha256
+from typing import List, Tuple, Dict
 
-class ECDSAKeyPair:
-    """Class for ECDSA key generation, signing, and verification."""
-    def __init__(self):
-        self.curve = ec.SECP256R1()
-        self.private_key = ec.generate_private_key(self.curve)
-        self.public_key = self.private_key.public_key()
+# Cyclic Group Operations
+class CyclicGroup:
+    def __init__(self, prime: int, generator: int):
+        self.p = prime
+        self.g = generator
 
-    def sign(self, message):
-        signature = self.private_key.sign(message, ec.ECDSA(hashes.SHA256()))
-        return decode_dss_signature(signature)
+    def exp(self, base: int, exp: int) -> int:
+        return pow(base, exp, self.p)
 
-    def verify(self, message, r, s):
-        try:
-            signature = encode_dss_signature(r, s)
-            self.public_key.verify(signature, message, ec.ECDSA(hashes.SHA256()))
-            return True
-        except InvalidSignature:
-            return False
+# Shamir's Secret Sharing
+def shamir_secret_sharing(n: int, t: int, secret: int, prime: int) -> List[Tuple[int, int]]:
+    coefficients = [secret] + [random.randint(1, prime - 1) for _ in range(t - 1)]
+    shares = [(i, sum(c * (i ** e) for e, c in enumerate(coefficients)) % prime) for i in range(1, n + 1)]
+    return shares
 
-class ShamirSecretSharing:
-    """Class for Shamir's Secret Sharing scheme."""
-    def __init__(self, prime_order):
-        self.prime_order = prime_order
+# Lagrange Interpolation
+def lagrange_interpolation(x: int, points: List[Tuple[int, int]], prime: int) -> int:
+    result = 0
+    for i, (xi, yi) in enumerate(points):
+        term = yi
+        for j, (xj, _) in enumerate(points):
+            if i != j:
+                term *= (x - xj) * pow(xi - xj, -1, prime)
+                term %= prime
+        result += term
+        result %= prime
+    return result
 
-    def share_secret(self, secret, n, t):
-        coeffs = [secret] + [random.randint(1, self.prime_order - 1) for _ in range(t - 1)]
-        return [(i, self.eval_polynomial(coeffs, i)) for i in range(1, n + 1)]
-
-    def eval_polynomial(self, coeffs, x):
-        return sum(c * (x ** i) for i, c in enumerate(coeffs)) % self.prime_order
-
-    def reconstruct_secret(self, shares, t):
-        x_values, y_values = zip(*shares)
-        secret = 0
-        for i in range(len(x_values)):
-            num = reduce(lambda a, b: a * b, [x for j, x in enumerate(x_values) if j != i], 1)
-            denom = reduce(lambda a, b: a * b, [(x_values[i] - x) % self.prime_order for j, x in enumerate(x_values) if j != i], 1)
-
-            if denom == 0 or pow(denom, -1, self.prime_order) is None:
-                raise ValueError("Denominator is not invertible.")
-
-            lagrange_coeff = num * pow(denom, -1, self.prime_order)
-            secret += y_values[i] * lagrange_coeff
-            secret %= self.prime_order
-        return secret
-
-class NIZKProof:
-    """Class for Non-Interactive Zero-Knowledge Proofs using ECDSA."""
-    def __init__(self, key_pair):
-        self.key_pair = key_pair
-
-    def generate_proof(self, message):
-        hashed_message = hashlib.sha256(message.encode()).digest()
-        r, s = self.key_pair.sign(hashed_message)
-        return r, s
-
-    def verify_proof(self, message, r, s):
-        hashed_message = hashlib.sha256(message.encode()).digest()
-        return self.key_pair.verify(hashed_message, r, s)
-
-class AdaptiveDiSEWithCorruption:
-    """Adaptive DiSE class with simulated corruption."""
-    def __init__(self, n, t):
+# Adaptive DPRF
+class AdaptiveDPRF:
+    def __init__(self, group: CyclicGroup, n: int, t: int):
+        self.group = group
         self.n = n
         self.t = t
-        self.curve_order = 115792089210356248762697446949407573529996955224135760342422259061068512044369
-        self.secret_sharing = ShamirSecretSharing(self.curve_order)
-        self.key_pairs = [ECDSAKeyPair() for _ in range(n)]
+        self.secret_u = random.randint(1, group.p - 1)
+        self.secret_v = random.randint(1, group.p - 1)
+        self.shares_u = shamir_secret_sharing(n, t, self.secret_u, group.p)
+        self.shares_v = shamir_secret_sharing(n, t, self.secret_v, group.p)
 
-    def run_with_corruption(self, input_x, message, corruption_rate=0.2):
-        total_start_time = time.time()
-        secret = random.randint(1, self.curve_order - 1)
-        shares = self.secret_sharing.share_secret(secret, self.n, self.t)
+    def eval(self, share_u: int, share_v: int, x: str) -> int:
+        h1, h2 = self.hash_to_group(x)
+        return (self.group.exp(h1, share_u) * self.group.exp(h2, share_v)) % self.group.p
 
-        num_corrupted = int(self.n * corruption_rate)
-        corrupted_parties = random.sample(range(self.n), num_corrupted)
-        print(f"Corrupted parties: {corrupted_parties}")
+    def combine(self, evaluations: List[Tuple[int, int]]) -> int:
+        if len(evaluations) < self.t:
+            return None  # Not enough shares
+        return lagrange_interpolation(0, evaluations, self.group.p)
 
-        evaluations = []
-        proof_gen_time = 0
-        proof_ver_time = 0
+    def hash_to_group(self, x: str) -> Tuple[int, int]:
+        hash_val = int(sha256(x.encode()).hexdigest(), 16) % self.group.p
+        return (self.group.exp(self.group.g, hash_val), self.group.exp(self.group.g, hash_val + 1))
 
-        for i in range(self.t):
-            key_pair = self.key_pairs[i]
-            proof_system = NIZKProof(key_pair)
+# Threshold Symmetric Encryption (TSE)
+class ThresholdSymmetricEncryption:
+    def __init__(self, group: CyclicGroup, dprf: AdaptiveDPRF):
+        self.group = group
+        self.dprf = dprf
 
-            if i in corrupted_parties:
-                evaluation = random.randint(1, self.curve_order - 1)
-                r, s = proof_system.generate_proof("tampered-input")
-            else:
-                evaluation = shares[i][1]
-                r, s = proof_system.generate_proof(input_x)
+    def encrypt(self, message: str, shares: List[Tuple[int, int]]) -> Tuple[int, int]:
+        w = self.dprf.combine(shares)
+        if w is None:
+            raise ValueError("Not enough shares for encryption.")
+        key = int(sha256(str(w).encode()).hexdigest(), 16)
+        ciphertext = int(message.encode().hex(), 16) ^ key
+        return ciphertext, w
 
-            start_time = time.perf_counter()
-            proof_gen_time += time.perf_counter() - start_time
-
-            start_time = time.perf_counter()
-            if proof_system.verify_proof(input_x, r, s):
-                evaluations.append((i + 1, evaluation))
-            proof_ver_time += time.perf_counter() - start_time
-
-        try:
-            dprf_output = self.secret_sharing.reconstruct_secret(evaluations, self.t)
-        except ValueError:
-            total_duration = time.time() - total_start_time
-            return "Reconstruction failed due to corrupted parties.", total_duration
-
-        hashed_message = int(hashlib.sha256(message.encode()).hexdigest(), 16) % self.curve_order
-        ciphertext = (hashed_message + dprf_output) % self.curve_order
-        decrypted_message = (ciphertext - dprf_output) % self.curve_order
-
-        total_duration = time.time() - total_start_time
-        if decrypted_message == hashed_message:
-            return "Decryption successful despite corruption.", total_duration
-        else:
-            return "Decryption failed due to excessive corruption.", total_duration
+    def decrypt(self, ciphertext: int, shares: List[Tuple[int, int]]) -> str:
+        w = self.dprf.combine(shares)
+        if w is None:
+            raise ValueError("Not enough shares for decryption.")
+        key = int(sha256(str(w).encode()).hexdigest(), 16)
+        plaintext = ciphertext ^ key
+        return bytes.fromhex(hex(plaintext)[2:]).decode()
 
 if __name__ == "__main__":
-    n = 10
-    t = 6
-    corruption_rate = 0.3
-    input_x = "corruption-test-input"
-    message = "Testing Adaptive DiSE with Corrupted Parties"
+    # Define a cyclic group (example parameters)
+    prime = 104729  # Example large prime
+    generator = 2   # Generator of the cyclic group
+    group = CyclicGroup(prime, generator)
 
-    adaptive_dise_system = AdaptiveDiSEWithCorruption(n, t)
-    result, duration = adaptive_dise_system.run_with_corruption(input_x, message, corruption_rate)
+    # Setup DPRF
+    n, t = 5, 3  # Total participants and threshold
+    dprf = AdaptiveDPRF(group, n, t)
+    tse = ThresholdSymmetricEncryption(group, dprf)
 
-    print(result)
-    print(f"Execution time: {duration:.4f} seconds")
+    # Encrypt a message
+    message = "hello"
+    shares = dprf.shares_u[:t]
+    ciphertext, w = tse.encrypt(message, shares)
+    print(f"Ciphertext: {ciphertext}")
+
+    # Decrypt the message
+    decrypted_message = tse.decrypt(ciphertext, shares)
+    print(f"Decrypted Message: {decrypted_message}")

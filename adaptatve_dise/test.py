@@ -1,139 +1,122 @@
 import time
-import random
+import os
 import matplotlib.pyplot as plt
-from main import AdaptiveDiSEWithCorruption
+from main import CyclicGroup, AdaptiveDPRF, ThresholdSymmetricEncryption  # Import your algorithm
 
-def stress_test_with_corruption(n, t, max_documents, corruption_rate, interval_decrement=0.00005, min_interval=0.001):
-    """Stress test the Adaptive DiSE implementation with corruption and measure performance."""
-    adaptive_dise_system = AdaptiveDiSEWithCorruption(n, t)
-    message = "Confidential data for performance testing"
-    input_x = "performance-test-input"
+# Global variables
+temp_dir = "temp"
+file_path = os.path.join(temp_dir, "temp_file.txt")
+
+# Create a test file
+def create_test_file(size_kb):
+    if not os.path.exists(temp_dir):
+        os.makedirs(temp_dir)
+    with open(file_path, "wb") as f:
+        f.write(os.urandom(size_kb * 1024))  # Create a file of `size_kb` KB
+
+# Measure performance for your algorithm
+def measure_performance_your_algo(max_documents, interval_decrement=0.00005, min_interval=0.001):
+    # Initialize cyclic group and your algorithm
+    prime = 104729  # Example large prime
+    generator = 2   # Generator of the cyclic group
+    group = CyclicGroup(prime, generator)
+    n, t = 5, 3  # Total participants and threshold
+    dprf = AdaptiveDPRF(group, n, t)
+    tse = ThresholdSymmetricEncryption(group, dprf)
+
+    # Read the test file
+    with open(file_path, "rb") as f:
+        message = f.read().decode("latin1")  # Decode to a string for encryption
 
     latencies = []
     throughputs = []
-    document_counts = []
+    intervals = []
 
-    current_interval = 0.01  # Initial interval (10 ms)
+    current_interval = 0.01
 
     for document_number in range(max_documents):
         iteration_latencies = []
-        start_time = time.perf_counter()
-
-        # Perform operations within the given interval
         start_iteration = time.perf_counter()
+
+        # Perform operations within the current interval
         while time.perf_counter() - start_iteration < current_interval:
-            parties = random.sample(range(n), t)
+            start_time = time.perf_counter()
 
-            # Measure latency for a single operation
-            op_start_time = time.perf_counter()
-            adaptive_dise_system.run_with_corruption(input_x, message, corruption_rate)
-            op_end_time = time.perf_counter()
+            # Encrypt and decrypt using your algorithm
+            shares = dprf.shares_u[:t]
+            ciphertext, _ = tse.encrypt(message, shares)
+            tse.decrypt(ciphertext, shares)
 
-            latency = op_end_time - op_start_time
-            iteration_latencies.append(latency)
+            op_latency = time.perf_counter() - start_time
+            iteration_latencies.append(op_latency)
 
-        # Calculate metrics
-        total_time = time.perf_counter() - start_time
-        if total_time == 0:
-            total_time = 1e-6  # Avoid division by zero
-
-        throughput = len(iteration_latencies) / total_time
+        # Calculate metrics for this interval
+        total_time = time.perf_counter() - start_iteration
+        throughput = len(iteration_latencies) / total_time if total_time > 0 else 0
         avg_latency = sum(iteration_latencies) / len(iteration_latencies) if iteration_latencies else 0
 
-        latencies.append(avg_latency)
         throughputs.append(throughput)
-        document_counts.append(document_number)
+        latencies.append(avg_latency)
+        intervals.append(current_interval)
 
         # Decrease the interval for the next iteration
         current_interval = max(min_interval, current_interval - interval_decrement)
 
-        # Stop if latency doubles (saturation)
-        if len(latencies) > 1 and avg_latency > latencies[-2] * 2:
-            print(f"Saturation detected at document {document_number}. Stopping stress test.")
+        # Stop if the average latency exceeds twice the minimum latency
+        if len(latencies) > 1 and avg_latency > min(latencies) * 2:
+            print(f"Your algorithm reaches saturation at interval {current_interval:.5f}.")
             break
 
-    return document_counts, latencies, throughputs
+    return intervals, latencies, throughputs
 
-def measure_impact_of_corruption(n, t, max_documents, corruption_rates):
-    """Measure the impact of different corruption rates on performance."""
-    corruption_results = []
+# Plotting results
+def plot_results(intervals, latencies, throughputs, file_size_kb):
+    plt.figure(figsize=(12, 8))
 
-    for corruption_rate in corruption_rates:
-        print(f"\nTesting with corruption rate: {corruption_rate}")
-        document_counts, latencies, throughputs = stress_test_with_corruption(n, t, max_documents, corruption_rate)
-        corruption_results.append((corruption_rate, latencies, throughputs))
+    # Add the file size as a title
+    plt.suptitle(f"Performance de l'algorithme pour un fichier de {file_size_kb} Ko", fontsize=16)
 
-    return corruption_results
-
-def plot_stress_test_results(document_counts, latencies, throughputs):
-    """Plot the results of the stress test."""
-    plt.figure(figsize=(18, 12))
-
-    # Plot average latency
-    plt.subplot(2, 2, 1)
-    plt.plot(document_counts, latencies, marker='o', linestyle='-', color='b')
-    plt.xlabel('Number of Encrypted Documents')
-    plt.ylabel('Average Latency (seconds)')
-    plt.title('Average Latency per Document')
+    # Average latency vs interval
+    plt.subplot(2, 1, 1)
+    plt.plot(intervals, latencies, marker='o', linestyle='-', label="Latence moyenne")
+    plt.xlabel('Intervalle courant (secondes)')
+    plt.ylabel('Latence moyenne (secondes)')
+    plt.title('Latence moyenne en fonction de l\'intervalle courant')
+    plt.legend()
     plt.grid(True)
+    plt.gca().invert_xaxis()
 
-    # Plot throughput
-    plt.subplot(2, 2, 2)
-    plt.plot(document_counts, throughputs, marker='o', linestyle='-', color='r')
-    plt.xlabel('Number of Encrypted Documents')
-    plt.ylabel('Throughput (operations per second)')
-    plt.title('Throughput per Document')
+    # Throughput vs interval
+    plt.subplot(2, 1, 2)
+    plt.plot(intervals, throughputs, marker='x', linestyle='--', label="Débit")
+    plt.xlabel('Intervalle courant (secondes)')
+    plt.ylabel('Débit (opérations par seconde)')
+    plt.title('Débit en fonction de l\'intervalle courant')
+    plt.legend()
     plt.grid(True)
+    plt.gca().invert_xaxis()
 
-    # Plot latency vs throughput
-    plt.subplot(2, 2, (3, 4))
-    plt.plot(throughputs, latencies, marker='o', linestyle='-', color='g')
-    plt.xlabel('Throughput (operations per second)')
-    plt.ylabel('Average Latency (seconds)')
-    plt.title('Latency vs Throughput')
-    plt.grid(True)
-
-    plt.tight_layout()
+    plt.tight_layout(rect=[0, 0, 1, 0.95])  # Adjust for global title
     plt.show()
 
-def plot_corruption_impact(corruption_rates, avg_latencies, avg_throughputs):
-    """Plot the impact of corruption rates on performance."""
-    plt.figure(figsize=(12, 6))
+# Run test and plot results
+def run_test_and_plot():
+    file_sizes = [1000]  # File sizes in KB
 
-    # Plot average latency vs corruption rate
-    plt.subplot(1, 2, 1)
-    plt.plot(corruption_rates, avg_latencies, marker='o', linestyle='-', color='b')
-    plt.xlabel('Corruption Rate')
-    plt.ylabel('Average Latency (seconds)')
-    plt.title('Impact of Corruption Rate on Latency')
-    plt.grid(True)
+    for size_kb in file_sizes:
+        print(f"Creating a {size_kb} KB file...")
+        create_test_file(size_kb)
 
-    # Plot throughput vs corruption rate
-    plt.subplot(1, 2, 2)
-    plt.plot(corruption_rates, avg_throughputs, marker='o', linestyle='-', color='r')
-    plt.xlabel('Corruption Rate')
-    plt.ylabel('Throughput (operations per second)')
-    plt.title('Impact of Corruption Rate on Throughput')
-    plt.grid(True)
+        max_documents = 500
 
-    plt.tight_layout()
-    plt.show()
+        # Run your algorithm
+        print("Running your algorithm...")
+        results = measure_performance_your_algo(max_documents)
+
+        # Plot results
+        print(f"Plotting results for a {size_kb} KB file...")
+        intervals, latencies, throughputs = results
+        plot_results(intervals, latencies, throughputs, file_size_kb=size_kb)
 
 if __name__ == "__main__":
-    # Test configurations
-    n = 50
-    t = 40
-    max_documents = 100
-    corruption_rates = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
-
-    # Run stress test with a default corruption rate
-    document_counts, latencies, throughputs = stress_test_with_corruption(n, t, max_documents, corruption_rate=0.2)
-    plot_stress_test_results(document_counts, latencies, throughputs)
-
-    # Measure the impact of different corruption rates
-    corruption_results = measure_impact_of_corruption(n, t, max_documents, corruption_rates)
-    avg_latencies = [sum(latencies) / len(latencies) for _, latencies, _ in corruption_results]
-    avg_throughputs = [sum(throughputs) / len(throughputs) for _, _, throughputs in corruption_results]
-
-    # Plot the impact of corruption rates
-    plot_corruption_impact(corruption_rates, avg_latencies, avg_throughputs)
+    run_test_and_plot()
