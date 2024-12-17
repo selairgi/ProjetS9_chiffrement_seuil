@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-@author: alex
-"""
-
 import tracemalloc
 import time
 import matplotlib
@@ -14,12 +8,33 @@ from key_management import generate_symmetric_key, generate_aes_key, share_key_a
 from encryption import encrypt_file
 from decryption import decrypt_file
 from memory_tracking import display_memory_usage
+from multiprocessing import Pool
 
 # Définition des paramètres
 directory_path = '/home/alex/Desktop/T3/Projet S9/DIAE/'
 n = 48  # Nombre total de nœuds
 t = 24   # Seuil de nœuds requis pour reconstruire la clé
-file_size_kb = 512  # Taille des fichiers (en kilo-octets)
+file_size_kb = 1024  # Taille des fichiers (en kilo-octets)
+
+
+def process_node(file_path, reconstructed_key):
+    """
+    Fonction pour traiter le chiffrement et le déchiffrement d'un fichier sur un nœud.
+    :param file_path: Chemin du fichier à traiter.
+    :param reconstructed_key: Clé reconstruite pour le chiffrement et déchiffrement.
+    :return: Tuple (encryption_latency, decryption_latency)
+    """
+    # Mesurer la latence du chiffrement
+    start_time = time.time()
+    encrypt_file(file_path, reconstructed_key)
+    encryption_latency = time.time() - start_time
+
+    # Mesurer la latence du déchiffrement
+    start_time = time.time()
+    decrypt_file(file_path.replace('.txt', '_encrypted.txt'), reconstructed_key)
+    decryption_latency = time.time() - start_time
+
+    return encryption_latency, decryption_latency
 
 
 def stress_system(file_count, initial_interval):
@@ -53,22 +68,17 @@ def stress_system(file_count, initial_interval):
         nodes = share_key_among_nodes_threshold(aes_key, n, t)
         reconstructed_key = reconstruct_key_from_shares_threshold(nodes, t)
 
-        # Chiffrement et déchiffrement
+        # Liste des processus
         if reconstructed_key:
             tracemalloc.start()
-            
-            # Mesurer la latence du chiffrement pour chaque fichier
-            for file_path in file_paths:
-                start_time = time.time()
-                encrypt_file(file_path, reconstructed_key)
-                encryption_latency = time.time() - start_time
-                encryption_latencies.append(encryption_latency)
 
-            # Mesurer la latence du déchiffrement pour chaque fichier
-            for file_path in file_paths:
-                start_time = time.time()
-                decrypt_file(file_path.replace('.txt', '_encrypted.txt'), reconstructed_key)
-                decryption_latency = time.time() - start_time
+            # Utilisation de Pool pour paralléliser les tâches
+            with Pool() as pool:
+                results = pool.starmap(process_node, [(file_path, reconstructed_key) for file_path in file_paths])
+
+            # Collecte des résultats
+            for encryption_latency, decryption_latency in results:
+                encryption_latencies.append(encryption_latency)
                 decryption_latencies.append(decryption_latency)
 
             display_memory_usage()
