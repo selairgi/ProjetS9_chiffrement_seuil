@@ -2,7 +2,6 @@ import time
 import random
 import os
 import sys
-import os
 import matplotlib.pyplot as plt
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from DISE.master_key import MasterKey
@@ -227,6 +226,7 @@ def plot_comparison(results1, results2, results3, labels, file_size_kb):
 def run_all_tests_and_plot():
     file_sizes = [10, 100, 1000]  # Taille des fichiers en Ko
     labels = ["DistEnc", "RobustDistEnc", "DIAE"]
+    final_report = []  # Liste pour stocker le bilan final
 
     for size_kb in file_sizes:
         print(f"Création du fichier de {size_kb} Ko...")
@@ -238,18 +238,48 @@ def run_all_tests_and_plot():
         # Exécution des trois algorithmes
         print("Exécution de DistEnc...")
         results_dist_enc = measure_performance_dist_enc(max_documents)
+        final_report.append({
+            "algorithm": "DistEnc",
+            "file_size": size_kb,
+            "max_latency": max(results_dist_enc[1]),
+            "max_throughput": max(results_dist_enc[2]),
+            "last_interval": results_dist_enc[0][-1],
+        })
         
         print("Exécution de RobustDistEnc...")
         results_robust_dist_enc = measure_performance_robust_dist_enc(max_documents)
+        final_report.append({
+            "algorithm": "RobustDistEnc",
+            "file_size": size_kb,
+            "max_latency": max(results_robust_dist_enc[1]),
+            "max_throughput": max(results_robust_dist_enc[2]),
+            "last_interval": results_robust_dist_enc[0][-1],
+        })
         
         print("Exécution de DIAE...")
         results_diae = measure_performance_diae(max_documents, key)
+        final_report.append({
+            "algorithm": "DIAE",
+            "file_size": size_kb,
+            "max_latency": max(results_diae[1]),
+            "max_throughput": max(results_diae[2]),
+            "last_interval": results_diae[0][-1],
+        })
         
         # Comparaison des résultats
         print(f"Tracé des résultats pour un fichier de {size_kb} Ko...")
         plot_comparison(results_dist_enc, results_robust_dist_enc, results_diae, labels=labels, file_size_kb=size_kb)
 
+    # Affichage du bilan final
+    print("\n--- BILAN FINAL ---")
+    for entry in final_report:
+        print(f"Algorithme: {entry['algorithm']}, "
+              f"Taille du fichier: {entry['file_size']} Ko, "
+              f"Max Latence: {entry['max_latency']:.5f} s, "
+              f"Max Débit: {entry['max_throughput']:.2f} ops/s, "
+              f"Dernier Intervalle: {entry['last_interval']:.5f} s")
 
 if __name__ == "__main__":
     # Exécuter les tests pour différentes tailles de fichier
     run_all_tests_and_plot()
+

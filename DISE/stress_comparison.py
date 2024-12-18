@@ -32,13 +32,13 @@ def encrypt_robust_threads(message, key, n, t, delta):
     parties = random.sample(range(n), t + delta)
     robust_threads.robust_encrypt(message, parties)
 
-# Fonction de stress progressif
+# Début des tests pour chaque protocole
 def stress_test(protocol_name, encrypt_function, n, threshold, delta=None):
     print(f"--- Début des tests pour {protocol_name} ---")
     master_key = MasterKey()
     master_key.key_gen(n=n)
     message = os.urandom(MESSAGE_SIZE)
-    results = {"frequency": [], "latency": [], "throughput": []}
+    results = {"frequency": [], "latency": [], "throughput": [], "critical_points": []}
 
     for freq in range(1, MAX_FREQUENCY + 1, STEP_FREQUENCY):
         latencies = []
@@ -66,23 +66,41 @@ def stress_test(protocol_name, encrypt_function, n, threshold, delta=None):
 
         # Arrêter si latence dépasse un seuil critique (double la latence initiale)
         if len(results["latency"]) > 1 and avg_latency > min(results["latency"]) * 1.5:
-            print(f"Point d'inflexion atteint pour {protocol_name} à {freq} req/s.")
+            critical_point = {"protocol": protocol_name, "frequency": freq, "latency": avg_latency}
+            results["critical_points"].append(critical_point)
             break
 
     return results
 
-
-# Fonction de comparaison et affichage des résultats
+# Comparaison et affichage des résultats avec points critiques
+# Comparaison et affichage des résultats avec points critiques
 def compare_protocols():
     n, threshold, delta = 50, 40, 4
+    all_critical_points = []
+
     dise_results = stress_test("DISE", encrypt_dise, n, threshold)
+    all_critical_points.extend(dise_results["critical_points"])
+
     robust_dise_results = stress_test("RobustDISE", encrypt_robust_dise, n, threshold, delta)
+    all_critical_points.extend(robust_dise_results["critical_points"])
+
     robust_threads_results = stress_test("RobustDISE_threads", encrypt_robust_threads, n, threshold, delta)
+    all_critical_points.extend(robust_threads_results["critical_points"])
 
-    plt.figure(figsize=(18, 12))
+    # Imprimer tous les points critiques à la fin
+    print("\n--- FIN de simulation ---")
+    if all_critical_points:
+        print("Points critiques atteints :")
+        for point in all_critical_points:
+            print(f"Protocole: {point['protocol']}, Fréquence: {point['frequency']} req/s, Latence: {point['latency']:.4f}s")
+    else:
+        print("Aucun point critique atteint.")
 
-    # Latence
-    plt.subplot(2, 1, 1)
+    # Affichage graphique
+    plt.figure(figsize=(18, 18))
+
+    # Latence moyenne en fonction de la fréquence
+    plt.subplot(3, 1, 1)
     plt.plot(dise_results["frequency"], dise_results["latency"], marker='o', label="DISE")
     plt.plot(robust_dise_results["frequency"], robust_dise_results["latency"], marker='x', label="RobustDISE")
     plt.plot(robust_threads_results["frequency"], robust_threads_results["latency"], marker='s', label="RobustDISE_threads")
@@ -92,8 +110,8 @@ def compare_protocols():
     plt.legend()
     plt.grid()
 
-    # Débit
-    plt.subplot(2, 1, 2)
+    # Débit en fonction de la fréquence
+    plt.subplot(3, 1, 2)
     plt.plot(dise_results["frequency"], dise_results["throughput"], marker='o', label="DISE")
     plt.plot(robust_dise_results["frequency"], robust_dise_results["throughput"], marker='x', label="RobustDISE")
     plt.plot(robust_threads_results["frequency"], robust_threads_results["throughput"], marker='s', label="RobustDISE_threads")
@@ -103,8 +121,23 @@ def compare_protocols():
     plt.legend()
     plt.grid()
 
+    # Latence en fonction du débit
+    plt.subplot(3, 1, 3)
+    plt.plot(dise_results["throughput"], dise_results["latency"], marker='o', label="DISE")
+    plt.plot(robust_dise_results["throughput"], robust_dise_results["latency"], marker='x', label="RobustDISE")
+    plt.plot(robust_threads_results["throughput"], robust_threads_results["latency"], marker='s', label="RobustDISE_threads")
+    plt.xlabel("Débit (msg/s)")
+    plt.ylabel("Latence moyenne (s)")
+    plt.title("Latence en fonction du débit")
+    plt.legend()
+    plt.grid()
+
     plt.tight_layout()
     plt.show()
+
+if __name__ == "__main__":
+    compare_protocols()
+
 
 if __name__ == "__main__":
     compare_protocols()
