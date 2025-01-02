@@ -11,10 +11,14 @@ from polynomial import *
 from utils import *
 
 
+from concurrent.futures import ThreadPoolExecutor
+
+
 
 ###########################################################################################################
 # DISTRIBUTED ENCRYPTION AND DECRYPTION IMPLEMENTATION
 ###########################################################################################################
+
 
 class Hise:
     @staticmethod
@@ -76,7 +80,6 @@ class Hise:
     @staticmethod
     def get_random_data_commitment() -> bytes:
         """Generate a random 32-byte commitment"""
-        # Using hashlib to generate a proper 32-byte commitment from a random ZR element
         random_zr = group.random(ZR)
         return hashlib.sha256(str(random_zr).encode()).digest()
 
@@ -85,7 +88,6 @@ class Hise:
         """Compute a Merkle tree leaf"""
         data = bytearray()
         data.extend(message)
-        # Use proper serialization for Charm elements
         data.extend(str(rho.value).encode())
         data.extend(str(r.value).encode())
         return hashlib.sha256(data).digest()
@@ -97,26 +99,29 @@ class Hise:
         """
         Distributed encryption of a message set according to HISE protocol.
         
-        Args:
-            messages: Messages to encrypt
-            pp: Public HISE parameters
-            keys: Server keys
-            coms: Commitments
-            t: Threshold
-            
-        Returns:
-            HISEBatchWithProofs with encrypted messages and proofs
+        On parallélise ici la partie du code qui calcule les feuilles du Merkle tree.
         """
-        # Initialization and padding
         N = 1 << (len(messages) - 1).bit_length()
         padded_messages = messages + [b''] * (N - len(messages))
         batch_keys = Hise.generate_batch_keys(N)
         
-        # Merkle tree construction
-        leaves = [
-            Hise._compute_merkle_leaf(msg, batch_keys.rho_k[i], batch_keys.r_k[i])
-            for i, msg in enumerate(padded_messages)
-        ]
+        # Fonction interne pour paralléliser le calcul des feuilles
+        def compute_leaf_task(args):
+            i, (msg, rho, r) = args
+            return i, Hise._compute_merkle_leaf(msg, rho, r)
+
+        tasks = [(i, (padded_messages[i], batch_keys.rho_k[i], batch_keys.r_k[i])) for i in range(len(padded_messages))]
+
+        # Nombre de threads, à ajuster selon ton matériel
+        num_threads = 4
+
+        leaves = [None]*len(padded_messages)
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = [executor.submit(compute_leaf_task, t) for t in tasks]
+            for f in futures:
+                i, leaf = f.result()
+                leaves[i] = leaf
+
         merkle_tree = MerkleTree(leaves)
         root = merkle_tree.get_root()
         merkle_paths = [merkle_tree.get_path(i) for i in range(len(messages))]
@@ -163,10 +168,8 @@ class Hise:
         
         for k in range(N):
             omega.append(format(k, f'0{(N-1).bit_length()}b').encode())
-            
             if k < len(messages):
                 mk = pair(batch_keys.g2_r_k[k], gk)
-                # Proper handling of pairing result serialization
                 mk_bytes = hashlib.sha256(str(mk).encode()).digest()
                 cipher = bytes(a ^ b for a, b in zip(padded_messages[k].ljust(32, b'\0'), mk_bytes))
             else:
@@ -188,14 +191,9 @@ class Hise:
 
     @staticmethod
     def verify_merkle_proof(batch: HISEBatchWithProofs, original_messages: List[bytes]) -> bool:
-        """
-        MTVer verification with original messages
-        """
-        # 1. Size verification
         if not is_power_of_two(batch.N):
             return False
 
-        # 2. Verify leaves and paths
         for i in range(len(original_messages)):
             leaf = Hise._compute_merkle_leaf(
                 original_messages[i],
@@ -209,7 +207,6 @@ class Hise:
 
     @staticmethod
     def verify_batch_proofs(batch: HISEBatchWithProofs) -> bool:
-        """Verify all NIZK proofs in the batch"""
         for stmt, proof in batch.enc_proofs:
             if not proof.verify(stmt):
                 return False
@@ -219,24 +216,6 @@ class Hise:
     def dist_gr_dec(batch: HISEBatchWithProofs, pp: HiseNizkProofParams, 
                     keys: List[HiseNizkWitness], coms: List[HiseWitnessCommitment],
                     t: int, original_messages: List[bytes]) -> List[bytes]:
-        """
-        Distributed decryption according to HISE protocol.
-        
-        Args:
-            batch: Batch of encrypted messages with proofs
-            pp: Public HISE parameters
-            keys: Server keys
-            coms: Commitments
-            t: Threshold
-            original_messages: Original messages for MTVer verification
-            
-        Returns:
-            List of decrypted messages
-            
-        Raises:
-            ValueError: If MTVer verification or proofs fail, or if threshold is invalid
-        """
-        # Check threshold validity
         if t <= 0:
             raise ValueError("Threshold must be positive")
         if t > len(keys):
@@ -244,68 +223,72 @@ class Hise:
         if t > len(coms):
             raise ValueError(f"Threshold {t} exceeds number of available commitments {len(coms)}")
 
-        # 1. MTVer verification
+        # 1. Vérification Merkle
         if not Hise.verify_merkle_proof(batch, original_messages):
             raise ValueError("MTVer verification failed")
             
-        # 2. Verify encryption proofs
+        # 2. Vérification des preuves
         if not Hise.verify_batch_proofs(batch):
             raise ValueError("Encryption proof verification failed")
 
-        # 3. Prepare hashes
+        # 3. Préparation des hash
         h_root = hash_to_g1(batch.root)
         h_x_w = hash_to_g1(batch.x_w)
         
-        # 4. Collect server shares
+        # 4. Récupération des parts des serveurs et vérification des preuves de déchiffrement
         server_shares = []
-        try:
-            for i in range(t):
-                # Compute α and β shares
-                alpha_share = h_root ** keys[i].α1.value
-                beta_share = h_x_w ** keys[i].β1.value
-                combined_share = alpha_share * beta_share
-                
-                # Verify decryption proofs
-                dec_stmt = HiseDecNizkStatement(
-                    g=pp.g,
-                    h=pp.h,
-                    h_of_x_eps=h_root,
-                    h_of_x_w=h_x_w,
-                    h_of_x_eps_pow_a_h_of_x_w_pow_b=combined_share,
-                    com_a=coms[i][0],
-                    com_b=coms[i][1]
-                )
-                
-                dec_proof = HiseDecNizkProof.prove(keys[i], dec_stmt)
-                if not dec_proof.verify(dec_stmt):
-                    raise ValueError(f"Invalid decryption proof for server {i}")
-                
-                server_shares.append(combined_share)
-        except IndexError:
-            raise ValueError(f"Not enough valid servers available for threshold {t}")
+        for i in range(t):
+            alpha_share = h_root ** keys[i].α1.value
+            beta_share = h_x_w ** keys[i].β1.value
+            combined_share = alpha_share * beta_share
 
-        # 5. Compute DPRF
+            dec_stmt = HiseDecNizkStatement(
+                g=pp.g,
+                h=pp.h,
+                h_of_x_eps=h_root,
+                h_of_x_w=h_x_w,
+                h_of_x_eps_pow_a_h_of_x_w_pow_b=combined_share,
+                com_a=coms[i][0],
+                com_b=coms[i][1]
+            )
+            
+            dec_proof = HiseDecNizkProof.prove(keys[i], dec_stmt)
+            if not dec_proof.verify(dec_stmt):
+                raise ValueError(f"Invalid decryption proof for server {i}")
+
+            server_shares.append(combined_share)
+
+        # 5. Calcul DPRF
         xs = [Scalar(i + 1) for i in range(t)]
         coeffs = Polynomial.lagrange_coefficients(xs)
 
-        # Calculate gk using multi-exponentiation
         gk = server_shares[0] ** coeffs[0].value
         for share, coeff in zip(server_shares[1:], coeffs[1:]):
             gk *= share ** coeff.value
 
-        # 6. Decrypt valid messages
-        decrypted_messages = []
+        # 6. Déchiffrement des messages en parallèle
+        def decrypt_message_task(args):
+            i, cipher, g2_r, gk = args
+            if cipher == b'\0' * 32:  # Message de padding
+                return i, None
+            mk = pair(g2_r, gk)
+            mk_bytes = hashlib.sha256(str(mk).encode()).digest()
+            message = bytes(a ^ b for a, b in zip(cipher, mk_bytes))
+            message = message.rstrip(b'\0')
+            return i, message if message else None
+
         valid_indices = range(len(batch.cipher_tree))
-        
-        for i in valid_indices:
-            if batch.cipher_tree[i] != b'\0' * 32:  # Skip padding
-                mk = pair(batch.g2_r_values[i], gk)
-                mk_bytes = hashlib.sha256(str(mk).encode()).digest()
-                
-                message = bytes(a ^ b for a, b in zip(batch.cipher_tree[i], mk_bytes))
-                message = message.rstrip(b'\0')
-                
-                if message:
-                    decrypted_messages.append(message)
+        tasks = [(i, batch.cipher_tree[i], batch.g2_r_values[i], gk) for i in valid_indices]
+
+        num_threads = 4  # Ajuste selon ton environnement
+        decrypted_list = [None]*len(tasks)
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = [executor.submit(decrypt_message_task, t) for t in tasks]
+            for f in futures:
+                i, msg = f.result()
+                decrypted_list[i] = msg
+
+        # Filtrer les messages valides
+        decrypted_messages = [m for m in decrypted_list if m is not None]
 
         return decrypted_messages
