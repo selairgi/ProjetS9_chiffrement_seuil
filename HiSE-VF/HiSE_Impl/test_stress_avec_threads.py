@@ -1,5 +1,5 @@
 import time
-from hise import Hise
+from hise_avec_threads import Hise
 from charm.toolbox.pairinggroup import PairingGroup
 
 group = PairingGroup('BN254')
