@@ -6,6 +6,7 @@ from functools import reduce
 from threading import Thread
 import os
 import matplotlib.pyplot as plt
+import pandas as pd
 
 # Helper functions
 def modular_exp(base, exp, mod):
@@ -146,64 +147,89 @@ class ThreadedTSE:
 
         return reduce(lambda x, y: x * y % self.prime, results, 1)
 
-# Test File Generation and Encryption Timing
+# Test File Generation and Stress Test
 def generate_file(filename, size_kb):
     with open(filename, 'wb') as f:
         f.write(os.urandom(size_kb * 1024))
 
-def encrypt_file(filename, tse, parties):
-    with open(filename, 'rb') as f:
-        content = f.read()
-    start_time = time.perf_counter()
-    ciphertext = tse.threaded_encrypt(content.hex(), parties)
-    end_time = time.perf_counter()
-    return ciphertext, end_time - start_time
-
-def decrypt_file(ciphertext, tse, parties):
-    start_time = time.perf_counter()
-    plaintext = tse.threaded_decrypt(ciphertext, parties)
-    end_time = time.perf_counter()
-    return plaintext, end_time - start_time
-
-# Performance Test with Varying File Sizes
-def performance_test():
+def stress_test():
     prime = 7919  # A prime number for modular arithmetic
     generator = 2  # A generator of the group
 
     tse = ThreadedTSE(prime, generator)
-    tse.setup(10, 6)  # Initial setup with 5 parties, threshold 3
 
-    file_sizes = [1, 10, 100, 1000]  # File sizes in KB
-    encryption_times = []
-    decryption_times = []
+    # Configurations for (n, t)
+    configurations = [
+        (8, 4), (12, 4), (24, 8), (40, 10)
+    ]
+    batch_sizes = [50, 100, 200, 400]  # Batch sizes in messages
 
-    for size in file_sizes:
-        test_filename = f"test_file_{size}KB.bin"
-        generate_file(test_filename, size)
+    encryption_results = []
+    decryption_results = []
 
-        # Measure encryption time
-        ciphertext, encryption_time = encrypt_file(test_filename, tse, [1, 2, 3])
-        encryption_times.append(encryption_time)
+    for n, t in configurations:
+        tse.setup(n, t)
+        parties = list(range(1, t + 1))  # Adaptive party selection
 
-        # Measure decryption time
-        _, decryption_time = decrypt_file(ciphertext, tse, [1, 2, 3])
-        decryption_times.append(decryption_time)
+        for batch_size in batch_sizes:
+            # Encryption Test
+            start_time = time.time()
+            batches = 0
+            while time.time() - start_time < 60:  # Run for 60 seconds
+                message = os.urandom(batch_size).hex()
+                tse.threaded_encrypt(message, parties)
+                batches += 1
 
-        print(f"File Size: {size} KB, Encryption Time: {encryption_time:.6f} s, Decryption Time: {decryption_time:.6f} s")
+            # Calculate encryption metrics
+            batches_per_minute = batches
+            messages_per_minute = batches * batch_size
+            throughput = messages_per_minute / 60
 
-    # Plot results
-    plt.figure(figsize=(10, 6))
-    plt.plot(file_sizes, encryption_times, marker='o', label='Encryption Time')
-    plt.plot(file_sizes, decryption_times, marker='s', label='Decryption Time')
+            encryption_results.append((n, t, batch_size, batches_per_minute, messages_per_minute, throughput))
+
+            # Decryption Test
+            ciphertext = tse.threaded_encrypt(os.urandom(batch_size).hex(), parties)
+            start_time = time.time()
+            batches = 0
+            while time.time() - start_time < 60:  # Run for 60 seconds
+                tse.threaded_decrypt(ciphertext, parties)
+                batches += 1
+
+            # Calculate decryption metrics
+            batches_per_minute = batches
+            messages_per_minute = batches * batch_size
+            throughput = messages_per_minute / 60
+
+            decryption_results.append((n, t, batch_size, batches_per_minute, messages_per_minute, throughput))
+
+    # Convert results to DataFrames
+    encryption_df = pd.DataFrame(encryption_results, columns=["n", "t", "Batch Size", "Batches/min", "Msg/min", "Throughput (msg/s)"])
+    decryption_df = pd.DataFrame(decryption_results, columns=["n", "t", "Batch Size", "Batches/min", "Msg/min", "Throughput (msg/s)"])
+
+    print("Encryption Results:")
+    print(encryption_df)
+    print("\nDecryption Results:")
+    print(decryption_df)
+
+    # Plot the results
+    plt.figure(figsize=(12, 8))
+    for (n, t) in configurations:
+        subset = encryption_df[(encryption_df["n"] == n) & (encryption_df["t"] == t)]
+        plt.plot(subset["Batch Size"], subset["Throughput (msg/s)"], marker='o', label=f"Encryption n={n}, t={t}")
+
+    for (n, t) in configurations:
+        subset = decryption_df[(decryption_df["n"] == n) & (decryption_df["t"] == t)]
+        plt.plot(subset["Batch Size"], subset["Throughput (msg/s)"], marker='x', linestyle='--', label=f"Decryption n={n}, t={t}")
+
     plt.xscale('log')
     plt.yscale('log')
-    plt.xlabel('File Size (KB)')
-    plt.ylabel('Time (s)')
-    plt.title('Performance of Encryption and Decryption (Multi-threaded)')
+    plt.xlabel('Batch Size')
+    plt.ylabel('Throughput (msg/s)')
+    plt.title('Throughput vs Batch Size for Encryption and Decryption')
     plt.legend()
     plt.grid(True)
     plt.show()
 
-# Run Performance Test
+# Run Stress Test
 if __name__ == "__main__":
-    performance_test()
+    stress_test()
